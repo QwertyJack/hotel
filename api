@@ -1,0 +1,11 @@
+curl 'https://hotels.ctrip.com/Domestic/Tool/AjaxHotelList.aspx' \
+  -d '__VIEWSTATEGENERATOR=DB1FBB6D' \
+  -d 'cityName=景德镇' \
+  -d 'txtkeyword=全季酒店' \
+  -d 'cityId=305' \
+  -d 'keyword=全季酒店' \
+  -d 'priceRange=-2' \
+  -d 'OrderBy=99' \
+  -d 'k1=全季酒店' \
+  -d 'k2=' \
+  -d 'page=1'
