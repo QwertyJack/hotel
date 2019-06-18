@@ -11,11 +11,13 @@ crawl hotels from ctrip.com
 """
 
 import json
+import logging
 from collections import namedtuple
 
 import scrapy
+import lxml
 
-from hotel.spiders.data import city, city_data
+from config.data import *
 
 City = namedtuple('City', ['name', 'url', 'id'])
 Hotel = namedtuple('Hotel', ['name', 'url'])
@@ -24,38 +26,54 @@ Hotel = namedtuple('Hotel', ['name', 'url'])
 class HotelSpider(scrapy.Spider):
     name = "hotel"
     __host = "https://hotels.ctrip.com"
-    _k1 = "全季酒店"
+
+    def __make_api_call(self, city, page, todo, k1):
+        return scrapy.FormRequest(
+            url='https://hotels.ctrip.com/Domestic/Tool/AjaxHotelList.aspx',
+            meta={'city': city, 'page': page, 'todo': todo, 'k1': k1},
+            callback=self.parse_hotel_api,
+            formdata={
+                '__VIEWSTATEGENERATOR': 'DB1FBB6D',
+                'cityName': city.name,
+                'txtkeyword': k1,
+                'cityId': city.id,
+                'keyword': k1,
+                'priceRange': '-2',
+                'OrderBy': '99',
+                'k1': k1,
+                'page': '1',
+            },
+        )
 
     def start_requests(self):
-        for cn in city:
-            x = next(x for x in city_data if x['name'] == cn)
-            c = City(
-                name=c,
-                url=HotelSpider.__host + '/hotel/' + x['py'] + x['n'] + '/k1' + HotelSpider._k1 ,
-                id=x['n'],
+        k1 = getattr(self, 'k1', '全季酒店')
+        for cn in TARGET_CITIES:
+            x = next((x for x in DATA_CITY_ID if x['name'] == cn), None)
+            if not x:
+                self.log('CityID not found: %s' % cn, logging.ERROR)
+                continue
+            yield self.__make_api_call(
+                city=City(
+                    name=cn,
+                    url=HotelSpider.__host + '/hotel/' + x['py'] + x['n'] + '/k1' + k1,
+                    id=x['n'],
+                ),
+                page=1,
+                todo=-1,
+                k1=k1,
             )
-            yield scrapy.FormRequest(
-                    url='https://hotels.ctrip.com/Domestic/Tool/AjaxHotelList.aspx',
-                    meta={'city': c, 'page': 1, 'todo': -1},
-                    callback=self.parse_hotel_api,
-                    formdata={
-                        '__VIEWSTATEGENERATOR': 'DB1FBB6D',
-                        'cityName': c.name,
-                        'txtkeyword': HotelSpider._k1,
-                        'cityId': c.id,
-                        'keyword': HotelSpider._k1,
-                        'priceRange': '-2',
-                        'OrderBy': '99',
-                        'k1': HotelSpider._k1,
-                        'page': '1',
-                        },
-                    )
 
     def parse_hotel_api(self, response):
         meta = response.meta
-        c = meta['city']
-        page = meta['page']
         data = json.loads(response.text)
+
+        # if there is no hotel in city, api will return warning in <h2>
+        tmp = lxml.html.fromstring('<tmp>' + data['hotelList'] + '</tmp>')
+        if tmp.xpath('./h2'):
+            self.log('No hotels found: %s @ %s' % (meta['k1'], meta['city'].name), logging.WARNING)
+            return
+
+        page = meta['page']
         todo = int(data['hotelAmount']) if page == 1 else meta['todo']
         for h in data['hotelPositionJSON']:
             yield scrapy.Request(
@@ -66,22 +84,12 @@ class HotelSpider(scrapy.Spider):
             todo -= 1
 
         if todo > 0:
-            yield scrapy.FormRequest(
-                    url='https://hotels.ctrip.com/Domestic/Tool/AjaxHotelList.aspx',
-                    meta={'city': c, 'page': page, 'todo': todo},
-                    callback=self.parse_hotel_api,
-                    formdata={
-                        '__VIEWSTATEGENERATOR': 'DB1FBB6D',
-                        'cityName': c.name,
-                        'txtkeyword': HotelSpider._k1,
-                        'cityId': c.id,
-                        'keyword': HotelSpider._k1,
-                        'priceRange': '-2',
-                        'OrderBy': '99',
-                        'k1': HotelSpider._k1,
-                        'page': str(meta['page'] + 1),
-                        },
-                    )
+            yield self.__make_api_call(
+                city=meta['city'],
+                page=meta['page'],
+                todo=todo,
+                k1=meta['k1'],
+            )
 
     def parse(self, response):
         # split by '&nbsp;&nbsp;'
@@ -93,7 +101,7 @@ class HotelSpider(scrapy.Spider):
             'en': response.xpath('//h2[@class="en_n"]/text()').get(),
             'start_year': desc[0],
             'size': desc[-1],
-            'url': response.request.url,
+            'url': response.request.url.split('?')[0],
         }
 
     def debug(self):
